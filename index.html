@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log Analyzer</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Crect x='1' y='3' width='10' height='1.6' fill='%23a8957f'/%3E%3Crect x='1' y='7' width='7' height='1.6' fill='%23a8957f'/%3E%3Crect x='1' y='11' width='5' height='1.6' fill='%23a8957f'/%3E%3Ccircle cx='11.5' cy='10.5' r='3.6' fill='none' stroke='%23d9a066' stroke-width='1.6'/%3E%3Cline x1='14' y1='13' x2='17' y2='16' stroke='%23d9a066' stroke-width='1.8'/%3E%3C/svg%3E">
+<!-- IBM Plex fonts. Only the font files are fetched; your logs never leave this computer.
+     Offline, the page falls back to Segoe UI / Consolas. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script>
+  // Pick the theme before the page paints so it never flashes the wrong colours.
+  (function () {
+    let theme = null;
+    try { theme = localStorage.getItem('theme'); } catch (e) {}
+    if (theme !== 'walnut' && theme !== 'beige') {
+      theme = matchMedia('(prefers-color-scheme: light)').matches ? 'beige' : 'walnut';
+    }
+    document.documentElement.dataset.theme = theme;
+  })();
+</script>
+<style>
+  /* ---------- Themes: colour is used for meaning only (red failed/high, amber medium, green accepted) ---------- */
+  :root, [data-theme="walnut"] {
+    --bg: #18120f; --surface: #1f1713; --raised: #2a1f18; --border: #3a2d24; --rule: #2a201a;
+    --text: #e9e0d4; --muted: #a8957f; --faint: #6f5f50; --accent: #d9a066; --on-accent: #18120f;
+    --red: #e07a64; --red-bg: rgba(224, 122, 100, .12); --amber: #d6ad5c; --green: #9cbf82; --blue: #9fb7c9;
+    color-scheme: dark;
+  }
+  [data-theme="beige"] {
+    --bg: #f4efe7; --surface: #fbf8f3; --raised: #efe6d9; --border: #dccfbc; --rule: #e9e0d2;
+    --text: #2e241c; --muted: #75655a; --faint: #a3927f; --accent: #9a6a2f; --on-accent: #fffaf2;
+    --red: #b7412f; --red-bg: rgba(183, 65, 47, .09); --amber: #a26f12; --green: #4f7a37; --blue: #3d6584;
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 13.5px/1.5 "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; }
+  .mono, code, pre, textarea, .num { font-family: "IBM Plex Mono", "Cascadia Mono", Consolas, ui-monospace, monospace; }
+  .num { font-variant-numeric: tabular-nums; }
+  .muted { color: var(--muted); }
+  .faint { color: var(--faint); }
+  p { margin: 0; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  /* ---------- Controls ---------- */
+  .btn { border: 1px solid var(--border); background: transparent; border-radius: 5px; padding: 5px 11px; font-size: 12.5px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .btn:hover { background: var(--raised); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 500; padding: 7px 16px; }
+  .btn.primary:hover { filter: brightness(1.07); }
+  .btn.quiet { border-color: transparent; color: var(--muted); }
+  .btn.quiet:hover { color: var(--text); }
+  .btn:disabled { opacity: .55; cursor: progress; }
+  .btn svg { width: 14px; height: 14px; }
+  input, select { background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 5px 8px; font-size: 12.5px; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+
+  /* ---------- Top bar ---------- */
+  .topbar { display: flex; align-items: center; gap: 14px; padding: 10px 20px; background: var(--surface); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; }
+  .brand { display: flex; align-items: center; gap: 9px; font-weight: 600; white-space: nowrap; }
+  .meta { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .topbar .actions { margin-left: auto; display: flex; gap: 6px; flex-shrink: 0; }
+
+  /* ---------- Page layout: scans sidebar + main ---------- */
+  .page { display: grid; grid-template-columns: 250px minmax(0, 1fr); min-height: calc(100vh - 49px); }
+  .sidebar { grid-column: 1; grid-row: 1; border-right: 1px solid var(--border); background: var(--surface); }
+  main { grid-column: 2; grid-row: 1; min-width: 0; }
+  @media (max-width: 900px) {
+    .page { grid-template-columns: minmax(0, 1fr); }
+    main, .sidebar { grid-column: 1; grid-row: auto; }
+    .sidebar { border-right: 0; border-top: 1px solid var(--border); }
+    .topbar .meta { display: none; }
+  }
+  .sec { padding: 16px 20px; border-bottom: 1px solid var(--border); }
+  .sec-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .label { font-size: 11.5px; font-weight: 500; letter-spacing: .05em; color: var(--muted); }
+  .sec-head .tools { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+  /* ---------- Metric strip ---------- */
+  .strip { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-bottom: 1px solid var(--border); }
+  .strip div { padding: 11px 20px; border-right: 1px solid var(--border); }
+  .strip div:last-child { border-right: 0; }
+  .strip b { display: block; font: 500 19px/1.3 "IBM Plex Mono", Consolas, monospace; font-variant-numeric: tabular-nums; }
+  .strip span { font-size: 11.5px; color: var(--muted); }
+  .strip .bad b { color: var(--red); }
+  @media (max-width: 700px) { .strip { grid-template-columns: repeat(3, minmax(0, 1fr)); } .strip div:nth-child(3) { border-right: 0; } .strip div:nth-child(-n+3) { border-bottom: 1px solid var(--border); } }
+
+  /* ---------- Input ---------- */
+  details.input > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+  details.input > summary::-webkit-details-marker { display: none; }
+  details.input > summary .chev { transition: transform .15s; color: var(--muted); }
+  details.input[open] > summary .chev { transform: rotate(90deg); }
+  details.input > summary .hint { font-size: 12px; color: var(--faint); }
+  .input-body { margin-top: 12px; display: grid; gap: 12px; }
+  .drop { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border: 1px dashed var(--border); border-radius: 6px; padding: 9px 12px; font-size: 12.5px; color: var(--muted); }
+  .drop.over { border-color: var(--accent); background: var(--raised); }
+  .drop label { color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+  .drop .btn { margin-left: auto; }
+  textarea { width: 100%; height: 150px; resize: vertical; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 12px; line-height: 1.6; white-space: pre; }
+  .settings { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(0, 2fr); gap: 10px; align-items: end; }
+  @media (max-width: 1100px) { .settings { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .field { display: grid; gap: 3px; font-size: 11.5px; color: var(--muted); }
+  .field input { width: 100%; color: var(--text); }
+  .run { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  #message { font-size: 12.5px; color: var(--muted); }
+  #message.error { color: var(--red); }
+
+  /* ---------- Timeline ---------- */
+  #timeline svg { width: 100%; height: auto; display: block; }
+  #timeline text { font-family: "IBM Plex Mono", Consolas, monospace; }
+  .legend { display: flex; gap: 14px; font-size: 11.5px; color: var(--muted); }
+  .legend i { display: inline-block; width: 3px; height: 10px; margin-right: 6px; vertical-align: -1px; }
+
+  /* ---------- Tables ---------- */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { text-align: left; font-weight: 500; font-size: 11.5px; color: var(--muted); padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: 7px 10px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+  td.r, th.r { text-align: right; }
+  .findings tbody tr { cursor: pointer; }
+  .findings tbody tr:hover td { background: var(--raised); }
+  .findings tr.sel td { background: var(--raised); }
+  .findings tr.sel td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+  .sev { display: inline-flex; align-items: center; gap: 7px; }
+  .sev i { width: 7px; height: 7px; border-radius: 2px; background: var(--amber); }
+  .sev.High i { background: var(--red); }
+  th[data-sort] { cursor: pointer; user-select: none; }
+  th[data-sort]:hover { color: var(--text); }
+  th[aria-sort="ascending"]::after { content: " ↑"; }
+  th[aria-sort="descending"]::after { content: " ↓"; }
+  .events tr.flagged td:first-child { box-shadow: inset 2px 0 0 var(--red); }
+  .res-Failed { color: var(--red); }
+  .res-Accepted { color: var(--green); }
+  .tag { font-size: 11px; border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; color: var(--muted); margin-left: 6px; }
+  .empty { padding: 22px 0; color: var(--muted); font-size: 13px; }
+  .pager { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+  .chip { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; border: 1px solid var(--border); border-radius: 5px; padding: 2px 3px 2px 9px; }
+  .chip button { border: 0; background: var(--raised); border-radius: 4px; padding: 1px 8px; cursor: pointer; font-size: 12px; }
+
+  /* ---------- Evidence ---------- */
+  .evidence { background: var(--surface); }
+  .evidence .explain { font-size: 12.5px; color: var(--muted); }
+  .log { font-size: 12px; line-height: 1.85; overflow-x: auto; white-space: pre; margin: 0; }
+  .log .ln { color: var(--faint); display: inline-block; min-width: 3.2em; user-select: none; }
+  .log .t { color: var(--muted); }
+  .log .f { color: var(--red); }
+  .log .a { color: var(--green); }
+  .log .u { color: var(--accent); }
+  .log .ip { color: var(--blue); }
+
+  /* ---------- Scans sidebar ---------- */
+  .sidebar .sec-head { margin-bottom: 4px; }
+  .scans { list-style: none; margin: 0; padding: 0; }
+  .scans li { display: flex; align-items: center; gap: 8px; padding: 8px 20px; border-bottom: 1px solid var(--rule); cursor: pointer; }
+  .scans li:hover { background: var(--raised); }
+  .scans li.current { background: var(--raised); box-shadow: inset 2px 0 0 var(--accent); }
+  .scans .info { flex: 1; min-width: 0; font-size: 12px; }
+  .scans .info b { font-weight: 500; font-size: 12.5px; }
+  .scans .del { border: 0; background: none; color: var(--faint); cursor: pointer; padding: 2px 6px; border-radius: 4px; font-size: 15px; line-height: 1; }
+  .scans .del:hover { color: var(--red); background: var(--red-bg); }
+  .side-foot { padding: 10px 20px; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="1" y="3" width="10" height="1.6" fill="var(--muted)"/><rect x="1" y="7" width="7" height="1.6" fill="var(--muted)"/><rect x="1" y="11" width="5" height="1.6" fill="var(--muted)"/><circle cx="11.5" cy="10.5" r="3.6" fill="none" stroke="var(--accent)" stroke-width="1.6"/><line x1="14" y1="13" x2="17" y2="16" stroke="var(--accent)" stroke-width="1.8"/></svg>
+    Log Analyzer
+  </div>
+  <span class="meta mono" id="scan-meta">No scan loaded</span>
+  <div class="actions">
+    <button type="button" class="btn" id="new-scan">New scan</button>
+    <button type="button" class="btn" id="export-btn">Export CSV</button>
+    <button type="button" class="btn quiet" id="theme-toggle" aria-label="Switch colour theme">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 2a6 6 0 0 1 0 12z" fill="currentColor"/></svg>
+      <span id="theme-name"></span>
+    </button>
+  </div>
+</header>
+
+<div class="page">
+<main>
+  <div class="strip" aria-live="polite">
+    <div><b id="m-events">–</b><span>Events</span></div>
+    <div id="m-failed-box"><b id="m-failed">–</b><span>Failed</span></div>
+    <div><b id="m-accepted">–</b><span>Accepted</span></div>
+    <div><b id="m-sources">–</b><span>Sources</span></div>
+    <div id="m-high-box"><b id="m-high">–</b><span>High findings</span></div>
+    <div><b id="m-skipped">–</b><span>Unrecognized lines</span></div>
+  </div>
+
+  <section class="sec">
+    <details class="input" id="input" open>
+      <summary>
+        <svg class="chev" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.5 7 5 3 8.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+        <span class="label">Input and detection settings</span>
+        <span class="hint" id="input-hint"></span>
+      </summary>
+      <div class="input-body">
+        <div class="drop" id="drop">
+          <span>Drop a .log or .txt file here, or <label for="file">browse</label>. Up to 5 MB.</span>
+          <input type="file" id="file" accept=".txt,.log" hidden>
+          <button type="button" class="btn" id="sample-btn">Load sample logs</button>
+        </div>
+        <textarea id="logs" spellcheck="false" wrap="off" aria-label="SSH authentication logs"
+          placeholder="Oct 16 09:01:00 server sshd[101]: Failed password for admin from 203.0.113.50 port 50101 ssh2"></textarea>
+        <div class="settings">
+          <label class="field">Failed logins per IP <input id="failures" class="num" type="number" min="2" max="100" value="5"></label>
+          <label class="field">Distinct accounts per IP <input id="users" class="num" type="number" min="2" max="100" value="5"></label>
+          <label class="field">Failures before success <input id="success" class="num" type="number" min="2" max="100" value="5"></label>
+          <label class="field">Window (minutes) <input id="minutes" class="num" type="number" min="1" max="1440" value="5"></label>
+          <label class="field">Log year <input id="year" class="num" type="number" min="1970" max="2100" value="2026"></label>
+          <label class="field">Allowlist (IPs or CIDR, comma separated) <input id="allowlist" class="mono" placeholder="192.0.2.10, 10.0.0.0/8"></label>
+        </div>
+        <div class="run">
+          <button type="button" class="btn primary" id="analyze-btn">Analyze</button>
+          <span id="message" role="status"></span>
+        </div>
+      </div>
+    </details>
+  </section>
+
+  <section class="sec">
+    <div class="sec-head">
+      <span class="label">Activity by source</span>
+      <div class="tools legend"><span><i style="background:var(--red)"></i>Failed</span><span><i style="background:var(--green)"></i>Accepted</span><span><i style="background:var(--red-bg);width:12px;outline:1px solid var(--red)"></i>Finding</span></div>
+    </div>
+    <div id="timeline"></div>
+    <p class="faint" id="timeline-note" style="font-size:12px;margin-top:6px"></p>
+  </section>
+
+  <section class="sec">
+    <div class="sec-head">
+      <span class="label">Findings</span><span class="faint num" id="finding-count"></span>
+      <div class="tools">
+        <select id="severity-filter" aria-label="Filter findings by severity">
+          <option value="">All severities</option><option>High</option><option>Medium</option>
+        </select>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="findings">
+        <thead><tr><th>Severity</th><th>Rule</th><th>Source</th><th>Account</th><th>Window</th><th class="r">Failed attempts</th></tr></thead>
+        <tbody id="findings"></tbody>
+      </table>
+    </div>
+    <p class="faint" style="font-size:12px;margin-top:8px">Findings flag patterns worth investigating. They are not proof of compromise.</p>
+  </section>
+
+  <section class="sec evidence" id="evidence"></section>
+
+  <section class="sec" id="events-sec" style="border-bottom:0">
+    <div class="sec-head">
+      <span class="label">Events</span>
+      <span id="line-filter"></span>
+      <div class="tools">
+        <input id="filter" type="search" placeholder="Filter by source, account, time" aria-label="Filter events">
+        <select id="status-filter" aria-label="Filter events by result">
+          <option value="">All results</option><option>Failed</option><option>Accepted</option>
+        </select>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="events">
+        <thead><tr>
+          <th data-sort="line" class="r">Line</th><th data-sort="time">Time</th><th data-sort="ip">Source</th>
+          <th data-sort="user">Account</th><th data-sort="status">Result</th><th data-sort="kind">Details</th>
+        </tr></thead>
+        <tbody id="events"></tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <span id="page-info" class="num"></span>
+      <button type="button" class="btn" id="prev">Previous</button>
+      <button type="button" class="btn" id="next">Next</button>
+    </div>
+  </section>
+</main>
+
+<aside class="sidebar">
+  <div class="sec" style="border-bottom:0;padding-bottom:6px">
+    <div class="sec-head"><span class="label">Saved scans</span></div>
+    <p id="history-message" role="status" class="faint" style="font-size:12px"></p>
+  </div>
+  <ul class="scans" id="history"></ul>
+  <div class="side-foot"><button type="button" class="btn quiet" id="delete-all" style="padding-left:0">Delete all scans</button></div>
+</aside>
+</div>
+
+<script>
+// ---------- Helpers ----------
+const el = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const PAGE_SIZE = 50;
+const SETTING_IDS = ['failures', 'users', 'success', 'minutes', 'year'];
+
+// Event times are written without a timezone. Treat them as UTC everywhere in the page
+// so the browser's own timezone never shifts them.
+const ts = iso => Date.parse(iso.slice(0, 19) + 'Z');
+const pad = n => String(n).padStart(2, '0');
+const hhmm = t => { const d = new Date(t); return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`; };
+const hhmmss = t => { const d = new Date(t); return `${hhmm(t)}:${pad(d.getUTCSeconds())}`; };
+const day = t => { const d = new Date(t); return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`; };
+const fmtTime = iso => iso ? `${day(ts(iso))} ${hhmmss(ts(iso))}` : '';
+function fmtRange(start, end) {
+  const a = ts(start), b = ts(end || start);
+  if (a === b) return `${day(a)} ${hhmmss(a)}`;
+  return day(a) === day(b) ? `${day(a)} ${hhmmss(a)}–${hhmmss(b)}` : `${fmtTime(start)} – ${fmtTime(end)}`;
+}
+function fmtDuration(ms) {
+  const m = Math.round(ms / 60e3);
+  if (m < 1) return `${Math.round(ms / 1e3)}s`;
+  if (m < 60) return `${m}m`;
+  if (m < 48 * 60) return `${Math.floor(m / 60)}h${m % 60 ? ' ' + (m % 60) + 'm' : ''}`;
+  return `${Math.round(m / 1440)}d`;
+}
+// SQLite stores created_at in UTC; show it in the viewer's local time.
+const fmtSaved = s => new Date(s.replace(' ', 'T') + 'Z').toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+async function request(url, options) {
+  const response = await fetch(url, options);
+  const data = await response.json();
+  if (!response.ok) throw Error(data.error || 'Request failed');
+  return data;
+}
+
+// ---------- State ----------
+let result = null;          // the analysis on screen
+let currentScan = null;     // its saved scan id
+let sourceName = '';        // file name or "sample.log"
+let selected = 0;           // index of the selected finding in result.alerts
+const view = { sort: 'line', dir: 1, page: 0, lines: null, lineLabel: '' };
+
+// ---------- Theme ----------
+function paintTheme() {
+  el('theme-name').textContent = document.documentElement.dataset.theme === 'walnut' ? 'Walnut' : 'Beige';
+}
+el('theme-toggle').onclick = () => {
+  const next = document.documentElement.dataset.theme === 'walnut' ? 'beige' : 'walnut';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem('theme', next); } catch (e) {}
+  paintTheme();
+};
+paintTheme();
+
+// ---------- Input ----------
+function showMessage(text, isError = false) {
+  el('message').textContent = text;
+  el('message').classList.toggle('error', isError);
+  if (isError) el('input').open = true;
+}
+el('new-scan').onclick = () => { el('input').open = true; el('logs').focus(); el('input').scrollIntoView({ block: 'nearest' }); };
+el('sample-btn').onclick = async () => {
+  el('logs').value = await (await fetch('/sample')).text();
+  sourceName = 'sample.log';
+  run();
+};
+async function readFile(file) {
+  if (!file) return;
+  if (file.size > 5_000_000) return showMessage('Choose a log file smaller than 5 MB.', true);
+  el('logs').value = await file.text();
+  sourceName = file.name;
+  showMessage(`Loaded ${file.name}. Click Analyze.`);
+}
+el('file').onchange = e => readFile(e.target.files[0]);
+el('logs').oninput = () => { sourceName = ''; };
+const drop = el('drop');
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); readFile(e.dataTransfer.files[0]); };
+
+// ---------- Analyze ----------
+async function run() {
+  const button = el('analyze-btn');
+  if (button.disabled) return;  // already analyzing; ignore double clicks
+  button.disabled = true; button.textContent = 'Analyzing…';
+  try {
+    const body = { text: el('logs').value, allowlist: el('allowlist').value, name: sourceName };
+    SETTING_IDS.forEach(k => body[k] = +el(k).value);
+    const data = await request('/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    currentScan = data.id;
+    showResult(data);
+    await refreshHistory();
+  } catch (e) {
+    showMessage(e.message, true);
+  } finally {
+    button.disabled = false; button.textContent = 'Analyze';
+  }
+}
+el('analyze-btn').onclick = run;
+
+function showResult(data) {
+  result = data;
+  // Older saved scans may lack newer fields, so fill them in.
+  data.alerts.forEach(a => {
+    a.lines = a.lines || a.evidence.map(e => e.line);
+    a.users = a.users || [...new Set(a.evidence.map(e => e.user))];
+    a.count = a.count ?? a.evidence.filter(e => e.status === 'Failed').length;
+    a.end = a.end || a.evidence[a.evidence.length - 1].time;
+  });
+  const failed = data.events.filter(e => e.status === 'Failed').length;
+  const high = data.alerts.filter(a => a.severity === 'High').length;
+  el('m-events').textContent = data.events.length;
+  el('m-failed').textContent = failed;
+  el('m-accepted').textContent = data.events.length - failed;
+  el('m-sources').textContent = new Set(data.events.map(e => e.ip)).size;
+  el('m-high').textContent = high;
+  el('m-skipped').textContent = data.skipped;
+  el('m-failed-box').classList.toggle('bad', failed > 0);
+  el('m-high-box').classList.toggle('bad', high > 0);
+
+  const times = data.events.map(e => e.time);
+  const range = times.length ? fmtRange(times[0], times[times.length - 1]) : 'no events';
+  const name = data.source_name || sourceName || 'pasted logs';
+  el('scan-meta').textContent = `${currentScan ? 'scan ' + currentScan + ' · ' : ''}${name} · ${range}`;
+  el('input-hint').textContent = `${name} · ${data.events.length} events`;
+  showMessage(`${data.events.length} events, ${data.alerts.length} findings, ${data.skipped} unrecognized lines.`);
+  el('input').open = false;
+
+  selected = 0;
+  el('filter').value = ''; el('status-filter').value = ''; el('severity-filter').value = '';
+  view.page = 0; view.lines = null;
+  renderTimeline(); renderFindings(); renderEvidence(); renderEvents();
+}
+
+// ---------- Timeline: one lane per source IP ----------
+function renderTimeline() {
+  const box = el('timeline');
+  el('timeline-note').textContent = '';
+  if (!result || !result.events.length) {
+    box.innerHTML = `<p class="empty">${result ? 'No recognized events in this input.' : 'Load the sample logs or your own to see activity.'}</p>`;
+    return;
+  }
+  // Lanes: sources with findings first, then by failed attempts.
+  const flagged = new Set(result.alerts.map(a => a.ip));
+  const bySource = new Map();
+  result.events.forEach(e => {
+    if (!bySource.has(e.ip)) bySource.set(e.ip, { ip: e.ip, events: [], failed: 0 });
+    const s = bySource.get(e.ip);
+    s.events.push({ ...e, t: ts(e.time) });
+    if (e.status === 'Failed') s.failed++;
+  });
+  const all = [...bySource.values()].sort((a, b) =>
+    flagged.has(b.ip) - flagged.has(a.ip) || b.failed - a.failed || b.events.length - a.events.length || a.ip.localeCompare(b.ip));
+  const lanes = all.slice(0, 12);
+  if (all.length > lanes.length) el('timeline-note').textContent = `Showing the top ${lanes.length} of ${all.length} sources.`;
+
+  // Segments: long quiet gaps are cut out so bursts are not squashed together.
+  const times = lanes.flatMap(l => l.events.map(e => e.t)).sort((a, b) => a - b);
+  const gapLimit = Math.max(10 * 60e3, 2 * (result.settings?.minutes || 5) * 60e3);
+  let segments = [{ start: times[0], end: times[0] }];
+  for (const t of times) {
+    const cur = segments[segments.length - 1];
+    if (t - cur.end > gapLimit) segments.push({ start: t, end: t }); else cur.end = t;
+  }
+  while (segments.length > 4) {  // keep at most 4 segments by merging the smallest gaps
+    let best = 0;
+    for (let i = 1; i < segments.length - 1; i++) if (segments[i + 1].start - segments[i].end < segments[best + 1].start - segments[best].end) best = i;
+    segments.splice(best, 2, { start: segments[best].start, end: segments[best + 1].end });
+  }
+  segments.forEach(s => { const p = Math.max((s.end - s.start) * 0.06, 30e3); s.start -= p; s.end += p; });
+
+  // Draw at the real pixel width so text never gets scaled down on small screens.
+  const W = Math.max(320, Math.round(box.clientWidth || 1000)), narrow = W < 640;
+  const labelW = narrow ? 118 : 170, gapW = narrow ? 30 : 46, top = 22, laneH = 30, H = top + lanes.length * laneH + 30;
+  const segW = (W - labelW - gapW * (segments.length - 1)) / segments.length;
+  segments.forEach((s, i) => s.x = labelW + i * (segW + gapW));
+  const x = t => {
+    const s = segments.find(s => t >= s.start && t <= s.end) || segments[segments.length - 1];
+    return s.x + (t - s.start) / (s.end - s.start) * segW;
+  };
+  const axisY = top + lanes.length * laneH;
+  let svg = '';
+
+  // Grid, time ticks, and gap markers.
+  const steps = [10e3, 30e3, 60e3, 300e3, 900e3, 1800e3, 3600e3, 3 * 3600e3, 6 * 3600e3, 12 * 3600e3, 86400e3];
+  segments.forEach((s, i) => {
+    const step = steps.find(st => (s.end - s.start) / st <= Math.max(2, Math.floor(segW / 85))) || 86400e3;
+    if (i === 0 || day(s.start) !== day(segments[i - 1].end)) svg += `<text x="${s.x}" y="11" fill="var(--faint)" font-size="11">${day(s.start)}</text>`;
+    for (let t = Math.ceil(s.start / step) * step; t <= s.end; t += step) {
+      const tx = x(t);
+      // Keep labels clear of the breaks between segments.
+      if ((i > 0 && tx < s.x + 26) || (i < segments.length - 1 && tx > s.x + segW - 26)) continue;
+      svg += `<line x1="${tx}" x2="${tx}" y1="${top - 4}" y2="${axisY}" stroke="var(--rule)"/>`;
+      svg += `<text x="${tx}" y="${axisY + 16}" text-anchor="${tx > W - 30 ? 'end' : 'middle'}" fill="var(--muted)" font-size="11">${step < 60e3 ? hhmmss(t) : step >= 86400e3 ? day(t) : hhmm(t)}</text>`;
+    }
+    if (i > 0) {
+      const gx = s.x - gapW / 2;
+      svg += `<text x="${gx}" y="11" text-anchor="middle" fill="var(--faint)" font-size="11">+${fmtDuration(s.start - segments[i - 1].end)}</text>`;
+      svg += `<line x1="${gx - 4}" x2="${gx + 4}" y1="${top - 2}" y2="${axisY}" stroke="var(--border)" stroke-dasharray="2 3"/>`;
+    }
+  });
+
+  lanes.forEach((lane, i) => {
+    const y = top + i * laneH + laneH / 2;
+    const maxChars = narrow ? 14 : 20;
+    const ipLabel = lane.ip.length > maxChars ? lane.ip.slice(0, maxChars - 1) + '…' : lane.ip;
+    svg += `<text x="0" y="${y + 4}" fill="var(--text)" font-size="12">${esc(ipLabel)}<title>${esc(lane.ip)}</title></text>`;
+    svg += `<text x="${labelW - 14}" y="${y + 4}" text-anchor="end" fill="var(--faint)" font-size="11">${lane.events.length}</text>`;
+    segments.forEach(s => svg += `<line x1="${s.x}" x2="${s.x + segW}" y1="${y}" y2="${y}" stroke="var(--border)"/>`);
+    // Finding bands behind the marks.
+    result.alerts.forEach((a, index) => {
+      if (a.ip !== lane.ip) return;
+      const x0 = x(ts(a.time)) - 4, x1 = x(ts(a.end)) + 4;
+      const on = index === selected;
+      svg += `<rect x="${x0}" y="${y - 11}" width="${Math.max(8, x1 - x0)}" height="22" rx="3" fill="var(--red-bg)" stroke="var(--red)" stroke-opacity="${on ? 1 : .35}" data-finding="${index}" style="cursor:pointer"><title>${esc(a.rule)}</title></rect>`;
+    });
+    // One mark per pixel per result, so huge logs stay fast.
+    const seen = new Set();
+    lane.events.forEach(e => {
+      const ex = x(e.t), key = Math.round(ex * 2) + e.status;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const colour = e.allowlisted ? 'var(--faint)' : e.status === 'Failed' ? 'var(--red)' : 'var(--green)';
+      svg += `<rect x="${(ex - 1.25).toFixed(1)}" y="${y - 7}" width="2.5" height="14" fill="${colour}" pointer-events="none"/>`;
+    });
+  });
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Login activity over time, one row per source IP">${svg}</svg>`;
+}
+// Redraw the timeline when the window size changes.
+let resizeTimer;
+addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderTimeline, 150); });
+el('timeline').onclick = e => {
+  const index = e.target.dataset?.finding;
+  if (index !== undefined) selectFinding(+index);
+};
+
+// ---------- Findings ----------
+function renderFindings() {
+  const tbody = el('findings');
+  if (!result) { tbody.innerHTML = '<tr><td colspan="6" class="empty">No scan loaded.</td></tr>'; el('finding-count').textContent = ''; return; }
+  const severity = el('severity-filter').value;
+  el('finding-count').textContent = result.alerts.length;
+  const rows = result.alerts.map((a, i) => [a, i]).filter(([a]) => !severity || a.severity === severity);
+  tbody.innerHTML = rows.map(([a, i]) => {
+    const account = a.users.length === 1 ? a.users[0] : `${a.users.length} accounts`;
+    return `<tr class="${i === selected ? 'sel' : ''}" data-index="${i}" tabindex="0" aria-selected="${i === selected}">
+      <td><span class="sev ${esc(a.severity)}"><i></i>${esc(a.severity)}</span></td>
+      <td>${esc(a.rule)}</td><td class="mono">${esc(a.ip)}</td><td class="mono">${esc(account)}</td>
+      <td class="mono muted">${esc(fmtRange(a.time, a.end))}</td><td class="r num">${a.count}</td></tr>`;
+  }).join('') || `<tr><td colspan="6" class="empty">${result.alerts.length ? 'No findings at this severity.' : 'No suspicious patterns at these settings.'}</td></tr>`;
+}
+function selectFinding(index) {
+  selected = index;
+  renderFindings(); renderEvidence(); renderTimeline();
+}
+el('findings').onclick = e => { const row = e.target.closest('tr[data-index]'); if (row) selectFinding(+row.dataset.index); };
+el('findings').onkeydown = e => {
+  const row = e.target.closest('tr[data-index]');
+  if (!row) return;
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectFinding(+row.dataset.index); }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); (e.key === 'ArrowDown' ? row.nextElementSibling : row.previousElementSibling)?.focus(); }
+};
+el('severity-filter').onchange = renderFindings;
+
+// ---------- Evidence for the selected finding ----------
+// Colour the important parts of a raw log line: time, result, account, source IP.
+function highlight(e) {
+  const raw = e.raw, ranges = [];
+  const stamp = /^(\d{4}-\S+|[A-Z][a-z]{2} [ \d]\d \d\d:\d\d:\d\d)/.exec(raw);
+  if (stamp) ranges.push([0, stamp[0].length, 't']);
+  const status = /\b(Failed|Accepted|Invalid user|authentication failure|Connection closed|Disconnected)\b/.exec(raw);
+  let after = 0;
+  if (status) { ranges.push([status.index, status.index + status[0].length, e.status === 'Accepted' ? 'a' : 'f']); after = status.index + status[0].length; }
+  const ipAt = raw.lastIndexOf(e.ip);
+  if (ipAt >= 0) ranges.push([ipAt, ipAt + e.ip.length, 'ip']);
+  if (e.user && e.user !== '(unknown)') {
+    const userAt = raw.indexOf(e.user, after);
+    if (userAt >= 0) ranges.push([userAt, userAt + e.user.length, 'u']);
+  }
+  ranges.sort((a, b) => a[0] - b[0]);
+  let out = '', pos = 0;
+  for (const [start, end, cls] of ranges) {
+    if (start < pos) continue;  // skip overlaps
+    out += esc(raw.slice(pos, start)) + `<span class="${cls}">${esc(raw.slice(start, end))}</span>`;
+    pos = end;
+  }
+  return out + esc(raw.slice(pos));
+}
+function renderEvidence() {
+  const box = el('evidence');
+  const a = result && result.alerts[selected];
+  if (!a) { box.hidden = true; return; }
+  box.hidden = false;
+  box.innerHTML = `<div class="sec-head">
+      <span class="label">Evidence</span>
+      <span class="explain">${esc(a.rule)} · <span class="mono">${esc(a.ip)}</span> · ${esc(a.explanation)}</span>
+      <div class="tools"><button type="button" class="btn" id="show-events">Show in events</button></div>
+    </div>
+    <pre class="log">${a.evidence.map(e => `<span class="ln">${e.line}</span>${highlight(e)}`).join('\n')}</pre>`;
+  el('show-events').onclick = () => {
+    view.lines = new Set(a.lines);
+    view.lineLabel = `${a.rule}, ${a.ip}`;
+    view.page = 0;
+    renderEvents();
+    el('events-sec').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+}
+
+// ---------- Events table ----------
+function renderEvents() {
+  const tbody = el('events');
+  if (!result) { tbody.innerHTML = '<tr><td colspan="6" class="empty">No scan loaded.</td></tr>'; el('page-info').textContent = ''; el('prev').disabled = el('next').disabled = true; return; }
+  const flagged = new Set(result.alerts.flatMap(a => a.lines));
+  const q = el('filter').value.trim().toLowerCase();
+  const status = el('status-filter').value;
+  const rows = result.events.filter(e =>
+    (!view.lines || view.lines.has(e.line)) &&
+    (!status || e.status === status) &&
+    (!q || [e.time, fmtTime(e.time), e.user, e.ip, e.status, e.kind].join(' ').toLowerCase().includes(q)));
+  rows.sort((a, b) => (view.sort === 'line' ? a.line - b.line
+    : String(a[view.sort] ?? '').localeCompare(String(b[view.sort] ?? ''), undefined, { numeric: true })) * view.dir || a.line - b.line);
+
+  el('line-filter').innerHTML = view.lines ? `<span class="chip">Evidence for ${esc(view.lineLabel)} <button type="button" id="clear-lines">Clear</button></span>` : '';
+  if (view.lines) el('clear-lines').onclick = () => { view.lines = null; view.page = 0; renderEvents(); };
+
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  view.page = Math.min(view.page, pages - 1);
+  const shown = rows.slice(view.page * PAGE_SIZE, (view.page + 1) * PAGE_SIZE);
+  tbody.innerHTML = shown.map(e => `<tr class="${flagged.has(e.line) ? 'flagged' : ''}" title="${esc(e.raw)}">
+      <td class="r num faint">${e.line}</td><td class="mono">${esc(fmtTime(e.time))}</td><td class="mono">${esc(e.ip)}</td>
+      <td class="mono">${esc(e.user)}</td><td class="res-${esc(e.status)}">${esc(e.status)}</td>
+      <td class="muted">${esc(e.kind || '')}${e.allowlisted ? '<span class="tag">allowlisted</span>' : ''}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="empty">No events match.</td></tr>';
+  el('page-info').textContent = rows.length ? `${view.page * PAGE_SIZE + 1}–${view.page * PAGE_SIZE + shown.length} of ${rows.length}` : '';
+  el('prev').disabled = view.page === 0;
+  el('next').disabled = view.page >= pages - 1;
+  document.querySelectorAll('th[data-sort]').forEach(th =>
+    th.setAttribute('aria-sort', th.dataset.sort === view.sort ? (view.dir === 1 ? 'ascending' : 'descending') : 'none'));
+}
+el('filter').oninput = () => { view.page = 0; renderEvents(); };
+el('status-filter').onchange = () => { view.page = 0; renderEvents(); };
+el('prev').onclick = () => { view.page--; renderEvents(); };
+el('next').onclick = () => { view.page++; renderEvents(); };
+document.querySelectorAll('th[data-sort]').forEach(th => th.onclick = () => {
+  view.dir = view.sort === th.dataset.sort ? -view.dir : 1;
+  view.sort = th.dataset.sort;
+  renderEvents();
+});
+
+// ---------- CSV export ----------
+// Cells starting with = + - @ are run as formulas by Excel. Log data is attacker-controlled,
+// so prefix those cells with ' to keep them as plain text.
+const csvCell = v => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; };
+el('export-btn').onclick = () => {
+  if (!result || !result.alerts.length) return showMessage('There are no findings to export yet.', true);
+  const rows = [['Severity', 'Rule', 'Source IP', 'Accounts', 'Start', 'End', 'Failed attempts', 'Explanation', 'Evidence'],
+    ...result.alerts.map(a => [a.severity, a.rule, a.ip, a.users.join(' '), a.time, a.end, a.count, a.explanation,
+      a.evidence.map(e => `Line ${e.line}: ${e.raw}`).join('\n')])];
+  const csv = rows.map(r => r.map(csvCell).join(',')).join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  const link = Object.assign(document.createElement('a'), { href: url, download: `findings${currentScan ? '-scan-' + currentScan : ''}.csv` });
+  link.click();
+  URL.revokeObjectURL(url);
+};
+
+// ---------- Saved scans ----------
+async function refreshHistory() {
+  try {
+    const scans = await request('/history');
+    el('history').innerHTML = scans.map(s => `<li class="${s.id === currentScan ? 'current' : ''}" data-open="${s.id}" tabindex="0">
+        <div class="info" title="${s.events} events"><b class="mono">#${s.id}</b> <span class="muted">${esc(fmtSaved(s.created_at))}</span><br>
+          <span class="faint">${s.alerts} findings</span>${s.high ? `<span class="faint"> · </span><span style="color:var(--red)">${s.high} high</span>` : ''}</div>
+        <button type="button" class="del" data-delete="${s.id}" aria-label="Delete scan ${s.id}" title="Delete scan">×</button></li>`).join('');
+    el('history-message').textContent = scans.length ? 'Newest 100 kept on this computer.' : 'Each analysis is saved here.';
+    el('delete-all').hidden = !scans.length;
+  } catch (e) {
+    el('history-message').textContent = 'Could not load saved scans: ' + e.message;
+  }
+}
+async function openScan(id) {
+  const data = await request('/history/' + id);
+  const settings = data.result.settings;
+  if (settings) {
+    SETTING_IDS.forEach(k => el(k).value = settings[k] ?? settings.threshold ?? el(k).value);
+    el('allowlist').value = (settings.allowlist || []).join(', ');
+    el('logs').value = data.result.source_text || '';
+  } else {
+    el('logs').value = data.result.events.map(e => e.raw).join('\n');
+  }
+  currentScan = data.id;
+  sourceName = data.result.source_name || '';
+  showResult(data.result);
+  refreshHistory();
+}
+el('history').onclick = async e => {
+  try {
+    const remove = e.target.dataset.delete;
+    if (remove) {
+      if (!confirm(`Delete scan #${remove}? This can't be undone.`)) return;
+      await request('/history/' + remove, { method: 'DELETE' });
+      if (+remove === currentScan) currentScan = null;
+      await refreshHistory();
+      el('history-message').textContent = `Deleted scan #${remove}.`;
+      return;
+    }
+    const row = e.target.closest('li[data-open]');
+    if (row) await openScan(row.dataset.open);
+  } catch (err) {
+    el('history-message').textContent = err.message;
+  }
+};
+el('history').onkeydown = e => {
+  if (e.key === 'Enter' && e.target.matches('li[data-open]')) openScan(e.target.dataset.open).catch(err => el('history-message').textContent = err.message);
+};
+el('delete-all').onclick = async () => {
+  if (!confirm("Delete every saved scan, including the original log lines? This can't be undone.")) return;
+  try {
+    const data = await request('/history', { method: 'DELETE' });
+    currentScan = null;
+    await refreshHistory();
+    el('history-message').textContent = `Deleted ${data.deleted} scans.`;
+  } catch (err) {
+    el('history-message').textContent = err.message;
+  }
+};
+
+// ---------- Start ----------
+renderTimeline(); renderFindings(); renderEvidence(); renderEvents(); refreshHistory();
+</script>
+</body>
+</html>
