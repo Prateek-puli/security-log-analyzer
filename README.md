@@ -1,5 +1,7 @@
 # Security Log Analyzer
 
+[![Tests](https://github.com/Prateek-puli/security-log-analyzer/actions/workflows/tests.yml/badge.svg)](https://github.com/Prateek-puli/security-log-analyzer/actions/workflows/tests.yml)
+
 A Python portfolio project with a local browser dashboard and SQLite storage. No additional packages are required.
 
 ## Start
