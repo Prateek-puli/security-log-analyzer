@@ -64,11 +64,15 @@ An alert keeps growing while matching events continue within the window. After a
 
 ## Screenshots
 
-The images in docs/ show the previous version of the dashboard. They use the supplied synthetic sample logs.
+Both use the supplied synthetic sample logs.
 
-![Dashboard with summary cards, saved scans, charts, and events](docs/dashboard.png)
+Walnut theme: summary counts, activity timeline per source IP, findings, evidence, and events.
 
-![Expanded alert with supporting log lines](docs/alert-evidence.png)
+![Dashboard in the walnut theme with the activity timeline, findings, evidence, and events](docs/dashboard.png)
+
+Beige theme: the selected finding's evidence with time, result, account, and source IP colour-coded.
+
+![Findings and colour-coded evidence lines in the beige theme](docs/alert-evidence.png)
 
 ## Architecture
 
